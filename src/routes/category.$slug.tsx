@@ -3,7 +3,11 @@ import { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { ProductCard, type ProductCardData } from "@/components/site/ProductCard";
 import { resolveImage } from "@/lib/assetMap";
-import { defaultCarouselDescription, defaultCarouselTitle, getCategorySubcategoryLinks } from "@/lib/categoryCarousels";
+import {
+  defaultCarouselDescription,
+  defaultCarouselTitle,
+  getCategorySubcategoryLinks,
+} from "@/lib/categoryCarousels";
 import {
   dedupeProductCardsStable,
   dedupeProductsBySlugPreferOrder,
@@ -12,6 +16,7 @@ import {
 } from "@/lib/fashionProducts";
 import { getFashionCategoryFallback } from "@/lib/fashionGallery";
 import { fetchPublishedProductsForCategoryPage } from "@/lib/publishedProductsQuery";
+import { fetchDeletedProductSlugs } from "@/lib/productDeletion";
 import { getSubcategoriesForCategory, resolveSubcategory } from "@/lib/subcategories";
 
 export const Route = createFileRoute("/category/$slug")({
@@ -43,6 +48,16 @@ function CategoryPage() {
   const [missing, setMissing] = useState(false);
   const [activeSubcategory, setActiveSubcategory] = useState<string | null>(null);
   const [activeSlide, setActiveSlide] = useState(0);
+  type CategoryProductRow = {
+    id: string;
+    slug: string;
+    title: string | null;
+    price: number | string;
+    sale_price: number | string | null;
+    subcategory?: string | null;
+    product_images?: Array<{ image_url: string | null }> | null;
+    product_variants?: Array<{ stock_quantity: number | string | null }> | null;
+  };
 
   useEffect(() => {
     (async () => {
@@ -50,6 +65,10 @@ function CategoryPage() {
       setMissing(false);
       const fallbackCategory = getFashionCategoryFallback(slug);
       const fallbackProducts = fashionProductsForCategorySlug(slug);
+      const deletedResult = await fetchDeletedProductSlugs(supabase);
+      const deletedSlugs = new Set(deletedResult.data);
+      const excludeDeleted = (items: ProductCardData[]) =>
+        items.filter((item) => !deletedSlugs.has(item.slug));
 
       const { data: c } = await supabase
         .from("categories")
@@ -70,7 +89,7 @@ function CategoryPage() {
           image_url: fallbackCategory.image_url,
         });
         setCarousel(null);
-        setProducts(fallbackProducts);
+        setProducts(excludeDeleted(fallbackProducts));
         setLoading(false);
         return;
       }
@@ -87,32 +106,46 @@ function CategoryPage() {
         .maybeSingle();
       setCarousel(carouselRow ?? null);
 
-      const { data: ps, error: prodErr } = await fetchPublishedProductsForCategoryPage(supabase, c.id);
+      const { data: ps, error: prodErr } = await fetchPublishedProductsForCategoryPage(
+        supabase,
+        c.id,
+      );
       if (prodErr) {
         console.error("[category] products:", prodErr);
-        setProducts(fallbackProducts);
+        setProducts(excludeDeleted(fallbackProducts));
         setLoading(false);
         return;
       }
 
       const dbCards = dedupeProductCardsStable(
-        (ps ?? []).map((p: any) => mergeCatalogFallbackIntoCard({
-          id: p.id,
-          slug: p.slug,
-          title: p.title,
-          price: Number(p.price),
-          sale_price: p.sale_price != null ? Number(p.sale_price) : null,
-          image: p.product_images?.[0]?.image_url ?? null,
-          category_name: c.name,
-          category_slug: slug,
-          subcategory_name: resolveSubcategory(p.subcategory, slug, `${p.title ?? ""} ${p.slug ?? ""}`),
-          stock_quantity_total: (p.product_variants ?? []).reduce(
-            (sum: number, v: any) => sum + Number(v.stock_quantity ?? 0),
-            0,
-          ),
-        })),
+        (ps ?? []).map((p: CategoryProductRow) =>
+          mergeCatalogFallbackIntoCard({
+            id: p.id,
+            slug: p.slug,
+            title: p.title,
+            price: Number(p.price),
+            sale_price: p.sale_price != null ? Number(p.sale_price) : null,
+            image: p.product_images?.[0]?.image_url ?? null,
+            category_name: c.name,
+            category_slug: slug,
+            subcategory_name: resolveSubcategory(
+              p.subcategory,
+              slug,
+              `${p.title ?? ""} ${p.slug ?? ""}`,
+            ),
+            stock_quantity_total: (p.product_variants ?? []).reduce(
+              (sum: number, v) => sum + Number(v.stock_quantity ?? 0),
+              0,
+            ),
+          }),
+        ),
       );
-      setProducts(dedupeProductsBySlugPreferOrder([...dbCards, ...fallbackProducts]));
+      setProducts(
+        dedupeProductsBySlugPreferOrder([
+          ...excludeDeleted(dbCards),
+          ...excludeDeleted(fallbackProducts),
+        ]),
+      );
       setLoading(false);
     })();
   }, [slug]);
@@ -129,11 +162,13 @@ function CategoryPage() {
     const carouselEnabled = carousel?.is_active !== false;
     const heading = carouselEnabled
       ? carousel?.title?.trim() || defaultCarouselTitle(cat?.name ?? "Category")
-      : cat?.name ?? "Category";
+      : (cat?.name ?? "Category");
     const body = carouselEnabled
       ? carousel?.description?.trim() || defaultCarouselDescription(cat?.name ?? "menswear")
       : cat?.description || "";
-    const image = carouselEnabled ? carousel?.image_url || cat?.image_url || null : cat?.image_url || null;
+    const image = carouselEnabled
+      ? carousel?.image_url || cat?.image_url || null
+      : cat?.image_url || null;
     if (carouselSubcategoryLinks.length === 0) {
       return [{ key: "all", heading, body, image, subcategory: null as string | null }];
     }
@@ -179,15 +214,17 @@ function CategoryPage() {
             className={`absolute inset-0 transition-opacity duration-700 ${idx === activeSlide ? "opacity-100" : "opacity-0"}`}
           >
             {slide.image && (
-              <img src={resolveImage(slide.image)} alt={slide.heading} className="h-full w-full object-cover" />
+              <img
+                src={resolveImage(slide.image)}
+                alt={slide.heading}
+                className="h-full w-full object-cover"
+              />
             )}
             <div className="absolute inset-0 bg-navy/65" />
           </div>
         ))}
         <div className="container relative mx-auto px-4 py-16 text-center md:py-24">
-          <p className="text-xs font-semibold uppercase tracking-[0.3em] text-gold">
-            Collection
-          </p>
+          <p className="text-xs font-semibold uppercase tracking-[0.3em] text-gold">Collection</p>
           <h1 className="mt-3 font-display text-4xl font-bold md:text-6xl">
             {carouselSlides[activeSlide]?.heading ?? cat?.name ?? "Loading..."}
           </h1>

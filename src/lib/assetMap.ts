@@ -1,11 +1,7 @@
-import {
-  assetUrlBySourcePath,
-  getRepresentativeAssetUrlForCategory,
-} from "@/lib/catalogAssets";
+import { assetUrlBySourcePath, getRepresentativeAssetUrlForCategory } from "@/lib/catalogAssets";
 
 const legacyAssetPathAliases: Record<string, string> = {
-  "/src/assets/shoes/casual/LV #sneaker.jfif":
-    "/src/assets/shoes/casual/lv-sneaker.jfif",
+  "/src/assets/shoes/casual/LV #sneaker.jfif": "/src/assets/shoes/casual/lv-sneaker.jfif",
   "/src/assets/shoes/loafers/#MenStyle #MensFashion #CorporateStyle #MensShoe\u2026.jfif":
     "/src/assets/shoes/loafers/mens-style-corporate-loafer.jfif",
   "/src/assets/caps and hats/caps/100% Italian Subalpino linen contemporary baseball\u2026.jfif":
@@ -54,8 +50,8 @@ export function hasResolvableAssetSourcePath(src: string | null | undefined): bo
   const [avifKey, webpKey] = toOptimizedVariants(canonicalSrc);
   return Boolean(
     assetUrlBySourcePath[avifKey] ||
-      assetUrlBySourcePath[webpKey] ||
-      assetUrlBySourcePath[canonicalSrc],
+    assetUrlBySourcePath[webpKey] ||
+    assetUrlBySourcePath[canonicalSrc],
   );
 }
 
@@ -67,8 +63,8 @@ export function resolveImage(src: string | null | undefined): string {
   if (!canonicalSrc) return siteHeroSuitUrl;
 
   const [avifKey, webpKey] = toOptimizedVariants(canonicalSrc);
+  if (assetUrlBySourcePath[canonicalSrc]) return assetUrlBySourcePath[canonicalSrc];
   if (assetUrlBySourcePath[avifKey]) return assetUrlBySourcePath[avifKey];
   if (assetUrlBySourcePath[webpKey]) return assetUrlBySourcePath[webpKey];
-  if (assetUrlBySourcePath[canonicalSrc]) return assetUrlBySourcePath[canonicalSrc];
   return siteHeroSuitUrl;
 }

@@ -1,12 +1,17 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { type CSSProperties, useEffect, useState } from "react";
-import { ArrowRight, Truck, Store, Sparkles, ShieldCheck } from "lucide-react";
+import { ArrowRight, Truck, Store, Sparkles, ShieldCheck, CheckCircle2 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { FashionGallery } from "@/components/site/FashionGallery";
 import { ProductCard, type ProductCardData } from "@/components/site/ProductCard";
 import { fashionGalleryItems } from "@/lib/fashionGallery";
-import { getRepresentativeAssetUrlForCategory } from "@/lib/catalogAssets";
+import {
+  getCatalogAssetsForCategory,
+  getCatalogAssetsForExactFolder,
+  getBlazerShowcaseAssets,
+  getRepresentativeImageForCategory,
+} from "@/lib/catalogAssets";
 import { CATALOG_TAXONOMY } from "@/lib/catalogTaxonomy";
 import {
   dedupeProductCardsStable,
@@ -14,8 +19,10 @@ import {
   fashionProductsAsCards,
   mergeCatalogFallbackIntoCard,
 } from "@/lib/fashionProducts";
+import { resolveImage } from "@/lib/assetMap";
 import { resolveSubcategory } from "@/lib/subcategories";
 import { siteHeroSuitUrl as heroImg } from "@/lib/assetMap";
+import { fetchDeletedProductSlugs } from "@/lib/productDeletion";
 
 function pickMixedCategories(products: ProductCardData[], limit: number): ProductCardData[] {
   if (products.length <= limit) return products;
@@ -114,6 +121,53 @@ function cardRevealStyle(index: number): CSSProperties {
   return { "--card-index": index } as CSSProperties;
 }
 
+function categoryFeatureList(category: (typeof CATALOG_TAXONOMY)[number]) {
+  const subcategoryCopy =
+    category.subcategories.length > 0
+      ? `Includes ${category.subcategories.slice(0, 4).join(", ")}.`
+      : `Focused ${category.name.toLowerCase()} edit with clean, easy styling.`;
+
+  return [
+    subcategoryCopy,
+    "Selected for sharp fit, comfort, and repeat wear.",
+    "Easy to pair with the rest of the Prince Esquire wardrobe.",
+  ];
+}
+
+function pickShowcaseImage(categorySlug: string) {
+  const assets =
+    categorySlug === "blazers"
+      ? getBlazerShowcaseAssets()
+      : getCatalogAssetsForExactFolder(categorySlug);
+  const primaryImage = getRepresentativeImageForCategory(categorySlug) ?? heroImg;
+
+  if (assets.length === 0) return primaryImage;
+
+  const pickByPattern = (patterns: RegExp[]) =>
+    assets.find(
+      (asset) =>
+        asset.image !== primaryImage && patterns.some((pattern) => pattern.test(asset.fileName)),
+    )?.image;
+
+  if (categorySlug === "blazers") {
+    return (
+      pickByPattern([/navy/i, /charcoal/i, /grey/i, /black/i, /outfit-blazer/i]) ??
+      assets.find((asset) => asset.image !== primaryImage)?.image ??
+      primaryImage
+    );
+  }
+
+  if (categorySlug === "socks") {
+    return (
+      pickByPattern([/hippih/i, /cat-socks-2/i, /quality-materials/i, /best-socks/i]) ??
+      assets.find((asset) => asset.image !== primaryImage)?.image ??
+      primaryImage
+    );
+  }
+
+  return primaryImage;
+}
+
 type HomepageProductRow = {
   id: string;
   slug: string;
@@ -165,8 +219,28 @@ export const Route = createFileRoute("/")({
 function HomePage() {
   const HOME_SECTION_SIZE = 8;
   const SOCKS_SECTION_SIZE = 4;
+  const categorySections = CATALOG_TAXONOMY.map((category) => {
+    const representativeImage = pickShowcaseImage(category.slug);
+    const representativeAsset = getRepresentativeImageForCategory(category.slug) ?? heroImg;
+    const exactFolderImages =
+      category.slug === "blazers"
+        ? getBlazerShowcaseAssets()
+        : getCatalogAssetsForExactFolder(category.slug);
+
+    return {
+      ...category,
+      image: representativeImage,
+      angleImages: (exactFolderImages.length > 0
+        ? exactFolderImages
+        : getCatalogAssetsForCategory(category.slug)
+      )
+        .map((asset) => asset.image)
+        .filter((image) => image !== representativeImage && image !== representativeAsset)
+        .slice(0, 3),
+    };
+  });
   const heroSlides = CATALOG_TAXONOMY.map((category) => ({
-    image: getRepresentativeAssetUrlForCategory(category.slug) ?? heroImg,
+    image: getRepresentativeImageForCategory(category.slug) ?? heroImg,
     title: category.heroTitle,
     body: category.heroBody,
     ctaTo: "/category/$slug" as const,
@@ -229,10 +303,17 @@ function HomePage() {
         const mappedFeatured = dedupeProductCardsStable(
           (prods as HomepageProductRow[]).map(homepageRowAsCard),
         );
-        const fashionCards = fashionProductsAsCards();
-        const curatedMerged = dedupeProductsBySlugPreferOrder([...fashionCards, ...mappedCurated]);
+        const deletedResult = await fetchDeletedProductSlugs(supabase);
+        const deletedSlugs = new Set(deletedResult.data);
+        const excludeDeleted = (items: ProductCardData[]) =>
+          items.filter((item) => !deletedSlugs.has(item.slug));
+        const fashionCards = excludeDeleted(fashionProductsAsCards());
+        const curatedMerged = dedupeProductsBySlugPreferOrder([
+          ...fashionCards,
+          ...excludeDeleted(mappedCurated),
+        ]);
         const featuredMerged = dedupeProductsBySlugPreferOrder([
-          ...mappedFeatured,
+          ...excludeDeleted(mappedFeatured),
           ...fashionCards,
         ]);
         const curatedList = pickHomepageCategoryMix(curatedMerged, 16);
@@ -274,7 +355,7 @@ function HomePage() {
           {heroSlides.map((slide, idx) => (
             <img
               key={slide.title}
-              src={slide.image}
+              src={resolveImage(slide.image)}
               alt={slide.title}
               className={`absolute inset-0 h-full w-full object-cover object-right transition-opacity duration-700 ${idx === activeSlide ? "opacity-80" : "opacity-0"}`}
               loading={idx === 0 ? "eager" : "lazy"}
@@ -309,7 +390,7 @@ function HomePage() {
                 <Button
                   variant="outline"
                   size="lg"
-                  className="border-navy-foreground/30 bg-transparent text-navy-foreground hover:bg-navy-foreground/10"
+                  className="rounded-full border-navy-foreground/30 bg-transparent px-7 text-navy-foreground hover:bg-navy-foreground/10"
                 >
                   Browse All Categories
                 </Button>
@@ -327,6 +408,118 @@ function HomePage() {
               ))}
             </div>
           </div>
+        </div>
+      </section>
+
+      <section className="reveal-section py-16 md:py-24">
+        <div className="container mx-auto px-4">
+          <div className="mb-10 max-w-2xl">
+            <p className="text-xs font-semibold uppercase tracking-[0.25em] text-gold">
+              Category Rooms
+            </p>
+            <h2 className="mt-2 font-display text-3xl font-bold md:text-4xl">
+              Browse Every Menswear Category
+            </h2>
+            <p className="mt-4 text-sm text-muted-foreground md:text-base">
+              Each collection now has its own focused section, with a dedicated image and direct
+              path into that category.
+            </p>
+          </div>
+        </div>
+
+        <div className="space-y-10">
+          {categorySections.map((category, index) => (
+            <section
+              key={category.slug}
+              className={index % 2 === 0 ? "bg-background" : "bg-secondary/35"}
+            >
+              <div className="container mx-auto px-4 py-8 md:py-12">
+                <div
+                  className={`category-display-card grid overflow-hidden rounded-md border border-border bg-card shadow-sm md:grid-cols-[0.92fr_1.08fr] ${
+                    index % 2 === 1 ? "md:[&>*:first-child]:order-2" : ""
+                  }`}
+                >
+                  <Link
+                    to="/category/$slug"
+                    params={{ slug: category.slug }}
+                    className="group relative block aspect-[16/11] overflow-hidden bg-muted md:aspect-auto md:min-h-[340px]"
+                  >
+                    <img
+                      src={resolveImage(category.image)}
+                      alt={category.name}
+                      loading={index < 2 ? "eager" : "lazy"}
+                      decoding="async"
+                      fetchPriority={index < 1 ? "high" : "low"}
+                      width={900}
+                      height={620}
+                      className="h-full w-full object-cover transition-transform duration-700 group-hover:scale-105"
+                    />
+                    <div className="absolute inset-0 bg-gradient-to-t from-navy/55 via-transparent to-transparent" />
+                    {category.angleImages.length > 0 && (
+                      <div className="absolute bottom-4 left-4 flex gap-2">
+                        {category.angleImages.map((image, angleIndex) => (
+                          <span
+                            key={image}
+                            className="angle-peek block h-14 w-14 overflow-hidden rounded-full border-2 border-background/80 bg-background shadow-lg"
+                            style={cardRevealStyle(angleIndex)}
+                          >
+                            <img
+                              src={resolveImage(image)}
+                              alt={`${category.name} angle ${angleIndex + 1}`}
+                              loading="lazy"
+                              decoding="async"
+                              width={96}
+                              height={96}
+                              className="h-full w-full object-cover"
+                            />
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                  </Link>
+
+                  <div className="flex flex-col justify-center p-6 md:p-10">
+                    <p className="text-xs font-semibold uppercase tracking-[0.25em] text-gold">
+                      {String(index + 1).padStart(2, "0")} / {category.name}
+                    </p>
+                    <h3 className="mt-3 font-display text-2xl font-bold md:text-4xl">
+                      {category.heroTitle}
+                    </h3>
+                    <p className="mt-4 max-w-xl text-sm leading-6 text-muted-foreground md:text-base">
+                      {category.description}
+                    </p>
+                    <ul className="mt-5 grid gap-2 text-sm text-foreground/80">
+                      {categoryFeatureList(category).map((feature) => (
+                        <li key={feature} className="flex items-start gap-2">
+                          <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-gold" />
+                          <span>{feature}</span>
+                        </li>
+                      ))}
+                    </ul>
+                    {category.subcategories.length > 0 && (
+                      <div className="mt-5 flex flex-wrap gap-2">
+                        {category.subcategories.map((subcategory) => (
+                          <span
+                            key={subcategory}
+                            className="rounded-sm border border-border bg-background px-3 py-1 text-xs font-medium text-foreground/75"
+                          >
+                            {subcategory}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                    <div className="mt-7">
+                      <Link to="/category/$slug" params={{ slug: category.slug }}>
+                        <Button variant="default">
+                          Shop {category.name} <ArrowRight className="ml-1 h-4 w-4" />
+                        </Button>
+                      </Link>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </section>
+          ))}
         </div>
       </section>
 

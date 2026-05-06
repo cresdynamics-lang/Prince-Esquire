@@ -12,6 +12,7 @@ import {
 } from "@/lib/fashionProducts";
 import { getSubcategoriesForCategory, resolveSubcategory } from "@/lib/subcategories";
 import { siteHeroSuitUrl } from "@/lib/assetMap";
+import { fetchDeletedProductSlugs } from "@/lib/productDeletion";
 
 export const Route = createFileRoute("/shop")({
   validateSearch: (search: Record<string, unknown>) => ({
@@ -66,6 +67,10 @@ function ShopPage() {
         return;
       }
       const allRows = cs ?? [];
+      const deletedResult = await fetchDeletedProductSlugs(supabase);
+      const deletedSlugs = new Set(deletedResult.data);
+      const excludeDeleted = (items: ProductCardData[]) =>
+        items.filter((item) => !deletedSlugs.has(item.slug));
       const productSlugs = new Set(
         (ps ?? []).map((p: any) => p.categories?.slug).filter(Boolean) as string[],
       );
@@ -81,25 +86,29 @@ function ShopPage() {
         });
       setCats(categories);
       const dbCards: ProductCardData[] = dedupeProductCardsStable(
-        (ps ?? []).map((p: any) => mergeCatalogFallbackIntoCard({
-          id: p.id,
-          slug: p.slug,
-          title: p.title,
-          price: Number(p.price),
-          sale_price: p.sale_price != null ? Number(p.sale_price) : null,
-          image: p.product_images?.[0]?.image_url ?? null,
-          category_name: p.categories?.name,
-          category_slug: p.categories?.slug,
-          subcategory_name: resolveSubcategory(
-            p.subcategory,
-            p.categories?.slug,
-            `${p.title ?? ""} ${p.slug ?? ""}`,
-          ),
-          stock_quantity_total: (p.product_variants ?? []).reduce(
-            (sum: number, v: any) => sum + Number(v.stock_quantity ?? 0),
-            0,
-          ),
-        })),
+        (ps ?? [])
+          .map((p: any) =>
+            mergeCatalogFallbackIntoCard({
+              id: p.id,
+              slug: p.slug,
+              title: p.title,
+              price: Number(p.price),
+              sale_price: p.sale_price != null ? Number(p.sale_price) : null,
+              image: p.product_images?.[0]?.image_url ?? null,
+              category_name: p.categories?.name,
+              category_slug: p.categories?.slug,
+              subcategory_name: resolveSubcategory(
+                p.subcategory,
+                p.categories?.slug,
+                `${p.title ?? ""} ${p.slug ?? ""}`,
+              ),
+              stock_quantity_total: (p.product_variants ?? []).reduce(
+                (sum: number, v: any) => sum + Number(v.stock_quantity ?? 0),
+                0,
+              ),
+            }),
+          )
+          .filter((p) => !deletedSlugs.has(p.slug)),
       );
 
       const categoryMap: Record<string, string | null> = {};
@@ -107,7 +116,9 @@ function ShopPage() {
         categoryMap[p.id] = p.category_id ?? null;
       });
       setProductCategoryMap(categoryMap);
-      setProducts(dedupeProductsBySlugPreferOrder([...dbCards, ...fashionProductsAsCards()]));
+      setProducts(
+        dedupeProductsBySlugPreferOrder([...dbCards, ...excludeDeleted(fashionProductsAsCards())]),
+      );
       setLoading(false);
     })();
   }, []);
@@ -121,7 +132,8 @@ function ShopPage() {
             if (!cat || !p.category_slug) return false;
             return p.category_slug === cat.slug;
           })
-        : products).filter((p) => {
+        : products
+      ).filter((p) => {
         if (activeSubcategory && p.subcategory_name !== activeSubcategory) return false;
         const term = q.trim().toLowerCase();
         if (!term) return true;
@@ -139,7 +151,9 @@ function ShopPage() {
     setActiveSubcategory(null);
   }, [activeCat]);
 
-  const activeCategorySlug = activeCat ? cats.find((c) => c.id === activeCat)?.slug ?? null : null;
+  const activeCategorySlug = activeCat
+    ? (cats.find((c) => c.id === activeCat)?.slug ?? null)
+    : null;
   const activeCategorySubcategories = activeCategorySlug
     ? getSubcategoriesForCategory(activeCategorySlug)
     : [];
@@ -151,7 +165,7 @@ function ShopPage() {
       if (!slug) return 2000;
       const i = CATALOG_TAXONOMY.findIndex((t) => t.slug === slug);
       if (i >= 0) return i;
-      return 1000 + slug.charCodeAt(0) % 500;
+      return 1000 + (slug.charCodeAt(0) % 500);
     };
     const list = [...filtered];
     if (groupShopByCategory) {
@@ -178,7 +192,9 @@ function ShopPage() {
             style={{ backgroundImage: `url(${siteHeroSuitUrl})` }}
           />
           <div className="relative z-10">
-            <p className="text-xs font-semibold uppercase tracking-[0.3em] text-gold">The Collection</p>
+            <p className="text-xs font-semibold uppercase tracking-[0.3em] text-gold">
+              The Collection
+            </p>
             <h1 className="mt-2 font-display text-4xl font-bold md:text-5xl">Shop All</h1>
             <div className="gold-divider mx-auto mt-4 w-24" />
             {q.trim() && (
@@ -237,9 +253,10 @@ function ShopPage() {
             <p className="font-medium">Could not load products from the database.</p>
             <p className="mt-1 text-xs opacity-90">{fetchError}</p>
             <p className="mt-2 text-xs text-muted-foreground">
-              Check that Supabase env vars are set, RLS allows public read of published products, and the database
-              is reachable. If you recently added the <code className="rounded bg-muted px-1">subcategory</code>{" "}
-              column, run migrations or the app will retry without it automatically.
+              Check that Supabase env vars are set, RLS allows public read of published products,
+              and the database is reachable. If you recently added the{" "}
+              <code className="rounded bg-muted px-1">subcategory</code> column, run migrations or
+              the app will retry without it automatically.
             </p>
           </div>
         )}
@@ -264,9 +281,7 @@ function ShopPage() {
                     </h2>
                   </div>
                 ) : null;
-                const card = (
-                  <ProductCard key={p.id} product={p} eager={index < 1} />
-                );
+                const card = <ProductCard key={p.id} product={p} eager={index < 1} />;
                 return heading ? [heading, card] : [card];
               })}
         </div>
@@ -287,8 +302,8 @@ function ShopPage() {
           <p className="py-16 text-center text-muted-foreground">
             {products.length === 0 ? (
               <>
-                No published products yet. In the admin dashboard or product quick edit (staff), open a product and
-                enable <strong>Published</strong> so it appears on the shop.
+                No published products yet. In the admin dashboard or product quick edit (staff),
+                open a product and enable <strong>Published</strong> so it appears on the shop.
               </>
             ) : (
               <>
@@ -301,7 +316,6 @@ function ShopPage() {
           </p>
         )}
       </div>
-
     </>
   );
 }

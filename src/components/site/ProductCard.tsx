@@ -24,7 +24,13 @@ export type ProductCardData = {
   subcategory_name?: string | null;
 };
 
-export function ProductCard({ product, eager = false }: { product: ProductCardData; eager?: boolean }) {
+export function ProductCard({
+  product,
+  eager = false,
+}: {
+  product: ProductCardData;
+  eager?: boolean;
+}) {
   const { has, toggle } = useWishlist();
   const wished = has(product.id);
   const onSale =
@@ -35,20 +41,15 @@ export function ProductCard({ product, eager = false }: { product: ProductCardDa
   const categoryFallbackImage = product.category_slug
     ? getRepresentativeImageForCategory(product.category_slug)
     : null;
-  const displayImage =
-    !product.image
-      ? categoryFallbackImage
-      : product.image.startsWith("/src/assets/") && !hasResolvableAssetSourcePath(product.image)
-        ? categoryFallbackImage ?? product.image
-        : product.image;
+  const displayImage = !product.image
+    ? categoryFallbackImage
+    : product.image.startsWith("/src/assets/") && !hasResolvableAssetSourcePath(product.image)
+      ? (categoryFallbackImage ?? product.image)
+      : product.image;
 
   return (
     <div className="product-card group relative overflow-hidden rounded-md border border-border bg-card">
-      <Link
-        to="/product/$slug"
-        params={{ slug: product.slug }}
-        className="block"
-      >
+      <Link to="/product/$slug" params={{ slug: product.slug }} className="block">
         <div className="relative aspect-[4/5] overflow-hidden bg-muted">
           <img
             src={resolveImage(displayImage)}
@@ -74,16 +75,10 @@ export function ProductCard({ product, eager = false }: { product: ProductCardDa
         aria-label={wished ? "Remove from wishlist" : "Add to wishlist"}
         className="absolute right-3 top-3 flex h-9 w-9 items-center justify-center rounded-full bg-background/90 text-foreground/70 backdrop-blur transition-colors hover:text-gold"
       >
-        <Heart
-          className={cn("h-4 w-4", wished && "fill-gold text-gold")}
-        />
+        <Heart className={cn("h-4 w-4", wished && "fill-gold text-gold")} />
       </button>
 
-      <Link
-        to="/product/$slug"
-        params={{ slug: product.slug }}
-        className="block p-4"
-      >
+      <Link to="/product/$slug" params={{ slug: product.slug }} className="block p-4">
         {product.category_name && (
           <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
             {product.category_name}
@@ -102,17 +97,13 @@ export function ProductCard({ product, eager = false }: { product: ProductCardDa
             <span className="text-sm font-medium text-muted-foreground">Price on request</span>
           ) : onSale ? (
             <>
-              <span className="font-semibold text-gold">
-                {formatKES(product.sale_price)}
-              </span>
+              <span className="font-semibold text-gold">{formatKES(product.sale_price)}</span>
               <span className="text-xs text-muted-foreground line-through">
                 {formatKES(product.price)}
               </span>
             </>
           ) : (
-            <span className="font-semibold text-foreground">
-              {formatKES(product.price)}
-            </span>
+            <span className="font-semibold text-foreground">{formatKES(product.price)}</span>
           )}
         </div>
       </Link>

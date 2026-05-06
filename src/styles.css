@@ -232,6 +232,56 @@
     animation: card-rise 0.5s ease-out both;
     animation-delay: calc(var(--card-index, 0) * 55ms);
   }
+  .gallery-card {
+    transition:
+      transform 0.45s cubic-bezier(0.2, 0.8, 0.2, 1),
+      box-shadow 0.45s cubic-bezier(0.2, 0.8, 0.2, 1);
+    will-change: transform;
+  }
+  .gallery-card:hover {
+    transform: translateY(-6px) scale(1.01);
+    box-shadow:
+      0 24px 48px -24px color-mix(in oklab, var(--navy) 38%, transparent),
+      0 0 0 1px color-mix(in oklab, var(--gold) 18%, transparent);
+  }
+  .angle-peek {
+    animation: playful-float 3.4s ease-in-out infinite;
+    animation-delay: calc(var(--card-index, 0) * 180ms);
+    transition:
+      transform 0.35s ease,
+      box-shadow 0.35s ease;
+  }
+  .angle-peek:hover {
+    transform: translateY(-5px) rotate(3deg) scale(1.06);
+    box-shadow: 0 18px 32px -18px color-mix(in oklab, var(--navy) 55%, transparent);
+  }
+  .angle-thumb {
+    transition:
+      transform 0.35s ease,
+      box-shadow 0.35s ease;
+  }
+  .angle-thumb:hover {
+    transform: translateY(-4px) rotate(-1deg);
+    box-shadow: 0 14px 28px -18px color-mix(in oklab, var(--navy) 55%, transparent);
+  }
+  .product-gallery-hero img {
+    transition: transform 0.7s cubic-bezier(0.2, 0.8, 0.2, 1);
+  }
+  .product-gallery-hero:hover img {
+    transform: scale(1.035);
+  }
+  .category-display-card {
+    animation: card-rise 0.55s ease-out both;
+    transition:
+      transform 0.45s cubic-bezier(0.2, 0.8, 0.2, 1),
+      box-shadow 0.45s cubic-bezier(0.2, 0.8, 0.2, 1);
+  }
+  .category-display-card:hover {
+    transform: translateY(-6px) rotate(-0.25deg);
+    box-shadow:
+      0 28px 60px -30px color-mix(in oklab, var(--navy) 35%, transparent),
+      0 0 0 1px color-mix(in oklab, var(--gold) 16%, transparent);
+  }
   .fade-in {
     animation: fade-in 0.5s ease-out;
   }
@@ -247,11 +297,9 @@
   }
   @keyframes section-rise {
     from {
-      opacity: 0;
       transform: translateY(18px);
     }
     to {
-      opacity: 1;
       transform: translateY(0);
     }
   }
@@ -265,6 +313,15 @@
       transform: translateY(0) scale(1);
     }
   }
+  @keyframes playful-float {
+    0%,
+    100% {
+      transform: translateY(0) rotate(-1deg);
+    }
+    50% {
+      transform: translateY(-7px) rotate(2deg);
+    }
+  }
   @supports (animation-timeline: view()) {
     .reveal-section {
       animation-timeline: view();
@@ -274,14 +331,26 @@
   @media (prefers-reduced-motion: reduce) {
     .fade-in,
     .reveal-section,
-    .card-stagger > * {
+    .card-stagger > *,
+    .angle-peek {
       animation: none;
     }
     .product-card,
-    .product-card img {
+    .gallery-card,
+    .category-display-card,
+    .gallery-card img,
+    .product-card img,
+    .angle-peek,
+    .angle-thumb,
+    .product-gallery-hero img {
       transition: none;
     }
-    .product-card:hover {
+    .gallery-card:hover,
+    .category-display-card:hover,
+    .product-card:hover,
+    .angle-peek:hover,
+    .angle-thumb:hover,
+    .product-gallery-hero:hover img {
       transform: none;
     }
   }

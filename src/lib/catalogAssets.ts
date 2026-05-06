@@ -8,6 +8,8 @@ const allAssetModules = import.meta.glob("../assets/**/*.{jpg,jpeg,png,webp,avif
   import: "default",
 }) as AssetModuleMap;
 
+const SOURCE_IMAGE_EXTENSIONS = [".jpg", ".jpeg", ".png", ".jfif"];
+const OPTIMIZED_IMAGE_EXTENSIONS = new Set([".webp", ".avif"]);
 const EXCLUDED_TOP_LEVEL_DIRS = new Set(["catalog", "fashions"]);
 const EXCLUDED_SEGMENTS = ["_files"];
 const GENERIC_FILE_PATTERNS = [
@@ -17,6 +19,23 @@ const GENERIC_FILE_PATTERNS = [
   /^item$/i,
   /^th(?:\(\d+\))?$/i,
 ];
+
+const PREFERRED_REPRESENTATIVE_FILE_PATTERNS: Record<string, RegExp[]> = {
+  "belt and ties": [/leather-belt-with-plaque-buckle/i],
+  blazers: [/^oip\s*\(1\)\.webp$/i, /^download\.webp$/i],
+  "caps and hats": [/^8iabrxerT\.jpg$/i, /caps?/i],
+  jackets: [/jacket-blazer-black-01\.webp$/i, /blazer/i],
+  "khaki-pants": [/cargohose-herren-fruhling-herbst-baumwolle/i],
+  linen: [/yellow-solid-short-sleeve-linen-shirt/i],
+  "polo shirts": [/knitwear polish an everyday icon/i, /polo/i],
+  shirts: [/shirt-formal-white-01\.jpg$/i, /formal/i],
+  shoes: [/shoes-formal-brown-03\.webp$/i, /formal/i],
+  socks: [/socks-quality-materials-dress-socks-made-with-fine/i],
+  suits: [/suits-rockefeller-collection-double-breasted-stripe/i],
+  sweaters: [/oip\s*\(19\)\.webp$/i, /sweater/i],
+  tracksuits: [/tracksuit/i, /jogger/i],
+  trousers: [/trousers-spring-autumn-smart-jeans-business-fashion/i],
+};
 
 export type CatalogAsset = {
   id: string;
@@ -53,7 +72,24 @@ function toSourceAssetPath(modulePath: string) {
 }
 
 function getPathSegments(modulePath: string) {
-  return modulePath.replace(/\\/g, "/").replace(/^..\/assets\//, "").split("/");
+  return modulePath
+    .replace(/\\/g, "/")
+    .replace(/^..\/assets\//, "")
+    .split("/");
+}
+
+function hasSourceImageForOptimizedAsset(modulePath: string) {
+  const normalizedPath = modulePath.replace(/\\/g, "/");
+  const extensionMatch = normalizedPath.match(/\.[^.]+$/);
+  if (!extensionMatch) return false;
+
+  const extension = extensionMatch[0]?.toLowerCase();
+  if (!extension || !OPTIMIZED_IMAGE_EXTENSIONS.has(extension)) return false;
+
+  const basePath = normalizedPath.slice(0, -extension.length);
+  return SOURCE_IMAGE_EXTENSIONS.some((sourceExtension) =>
+    Object.prototype.hasOwnProperty.call(allAssetModules, `${basePath}${sourceExtension}`),
+  );
 }
 
 function isExcludedAssetPath(segments: string[]) {
@@ -107,7 +143,10 @@ function normalizeCategorySlug(topFolder: string, subFolder: string | null, file
   if (/(sock)/.test(joined)) return "socks";
   if (/(polo)/.test(joined)) return "polo-t-shirts";
   if (/(shoe|loafer|oxford|boot|sandal)/.test(joined)) return "shoes";
-  if (/(three-piece|3 piece|two-piece|2 piece|wedding suit|suit)/.test(joined) && !/(track)/.test(joined)) {
+  if (
+    /(three-piece|3 piece|two-piece|2 piece|wedding suit|suit)/.test(joined) &&
+    !/(track)/.test(joined)
+  ) {
     return "suits";
   }
   if (/(blazer)/.test(joined)) return "blazers";
@@ -205,17 +244,25 @@ function buildAssetTitle(
   return titleCase(words.slice(0, 12).join(" "));
 }
 
-const assetUrlBySourcePathEntries = Object.entries(allAssetModules).map(([modulePath, url]) => [
-  toSourceAssetPath(modulePath),
-  url,
-]);
+const assetUrlBySourcePathEntries = new Map<string, string>();
+for (const [modulePath, url] of Object.entries(allAssetModules)) {
+  const sourcePath = toSourceAssetPath(modulePath);
+  const extension = modulePath.replace(/^.*(\.[^.]+)$/, "$1").toLowerCase();
+  const isOptimized = OPTIMIZED_IMAGE_EXTENSIONS.has(extension);
+  const existing = assetUrlBySourcePathEntries.get(sourcePath);
+  if (existing && isOptimized) continue;
+  assetUrlBySourcePathEntries.set(sourcePath, url);
+}
 
-export const assetUrlBySourcePath = Object.fromEntries(
-  assetUrlBySourcePathEntries,
-) as Record<string, string>;
+export const assetUrlBySourcePath = Object.fromEntries(assetUrlBySourcePathEntries) as Record<
+  string,
+  string
+>;
 
 const rawCatalogAssets = Object.entries(allAssetModules)
   .map(([modulePath, url]) => {
+    if (hasSourceImageForOptimizedAsset(modulePath)) return null;
+
     const segments = getPathSegments(modulePath);
     if (isExcludedAssetPath(segments)) return null;
 
@@ -297,9 +344,30 @@ export function getCatalogAssetsForCategory(categorySlug: string) {
   return catalogAssets.filter((asset) => asset.categorySlug === categorySlug);
 }
 
+export function getCatalogAssetsForExactFolder(categorySlug: string) {
+  return catalogAssets.filter((asset) => slugify(asset.topFolder) === categorySlug);
+}
+
+export function getBlazerShowcaseAssets() {
+  return getCatalogAssetsForCategory("jackets").filter((asset) => /blazer/i.test(asset.fileName));
+}
+
 export function getRepresentativeAssetForCategory(categorySlug: string) {
-  const matches = getCatalogAssetsForCategory(categorySlug);
+  const exactMatches =
+    categorySlug === "blazers"
+      ? getBlazerShowcaseAssets()
+      : getCatalogAssetsForExactFolder(categorySlug);
+  const matches =
+    exactMatches.length > 0 ? exactMatches : getCatalogAssetsForCategory(categorySlug);
   if (matches.length === 0) return null;
+
+  const preferredPatterns = PREFERRED_REPRESENTATIVE_FILE_PATTERNS[categorySlug] ?? [];
+  for (const pattern of preferredPatterns) {
+    const preferred = matches.find(
+      (asset) => pattern.test(asset.fileName) || pattern.test(asset.title),
+    );
+    if (preferred) return preferred;
+  }
 
   const ranked = [...matches].sort((a, b) => {
     const aScore = looksGenericFile(a.fileName) ? 2 : 0;

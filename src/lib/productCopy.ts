@@ -16,7 +16,9 @@ type CopyProfile = {
 };
 
 function normalizeText(value: string | null | undefined) {
-  return String(value ?? "").trim().toLowerCase();
+  return String(value ?? "")
+    .trim()
+    .toLowerCase();
 }
 
 function titleCase(value: string) {
@@ -32,7 +34,10 @@ export function inferCategorySlugFromText(text: string) {
   if (/(sock)/.test(value)) return "socks";
   if (/(polo)/.test(value)) return "polo-t-shirts";
   if (/(shoe|loafer|oxford|boot|sandal)/.test(value)) return "shoes";
-  if (/(three-piece|3 piece|3-piece|two-piece|2 piece|wedding suit|suit)/.test(value) && !/(track)/.test(value)) {
+  if (
+    /(three-piece|3 piece|3-piece|two-piece|2 piece|wedding suit|suit)/.test(value) &&
+    !/(track)/.test(value)
+  ) {
     return "suits";
   }
   if (/(blazer)/.test(value)) return "blazers";
@@ -66,7 +71,8 @@ function baseProfile(categorySlug: string) {
       material: "a breathable shirting fabric chosen for comfort and a cleaner finish",
       fit: "a modern fit that stays easy through the body without looking loose",
       occasion: "office dressing, dinners, celebrations, and elevated everyday wear",
-      styling: "works well tucked into trousers, layered under blazers, or styled open for relaxed polish",
+      styling:
+        "works well tucked into trousers, layered under blazers, or styled open for relaxed polish",
       care: "machine wash cold and finish with a warm iron for the sharpest result",
     },
     shoes: {
@@ -87,7 +93,8 @@ function baseProfile(categorySlug: string) {
       material: "a lightweight performance-inspired fabric designed for comfort and movement",
       fit: "an athletic modern cut that stays neat without feeling restrictive",
       occasion: "travel, active days, casual errands, and clean off-duty styling",
-      styling: "wear together for a matched look or break the set up with basics for daily rotation",
+      styling:
+        "wear together for a matched look or break the set up with basics for daily rotation",
       care: "machine wash cold and air dry for longer-lasting colour and fabric recovery",
     },
     jackets: {
@@ -129,14 +136,16 @@ function baseProfile(categorySlug: string) {
       material: "a comfort-focused knit built for softness, breathability, and daily wear",
       fit: "an easy flexible fit that stays comfortable through longer days",
       occasion: "office dressing, daily routines, events, and dependable everyday rotation",
-      styling: "keeps formal shoes, loafers, and casual pairs feeling more complete and comfortable",
+      styling:
+        "keeps formal shoes, loafers, and casual pairs feeling more complete and comfortable",
       care: "machine wash cold and air dry when possible to protect the stretch and feel",
     },
     sweaters: {
       material: "a soft knit fabric chosen for warmth, texture, and easy layering",
       fit: "a comfortable modern shape that layers neatly without bulk",
       occasion: "cool-weather commutes, office layering, relaxed evenings, and travel dressing",
-      styling: "works over shirts, under jackets, or with trousers and denim for effortless balance",
+      styling:
+        "works over shirts, under jackets, or with trousers and denim for effortless balance",
       care: "hand wash or use a gentle cycle to help preserve the knit finish",
     },
     "polo-t-shirts": {
@@ -194,7 +203,8 @@ function overrideProfile(
     next.material = "a textured knit fabric that adds softness and a richer surface finish";
   }
   if (/(three piece|3 piece|3-piece)/.test(text)) {
-    next.styling = "ideal when you want a fuller formal look with stronger presence and layered elegance";
+    next.styling =
+      "ideal when you want a fuller formal look with stronger presence and layered elegance";
   }
 
   return next;
@@ -206,14 +216,39 @@ export function buildProductDescription({
   categoryName,
   subcategoryName,
 }: ProductCopyInput) {
-  const slug = categorySlug || inferCategorySlugFromText(`${title} ${categoryName ?? ""} ${subcategoryName ?? ""}`);
+  const slug =
+    categorySlug ||
+    inferCategorySlugFromText(`${title} ${categoryName ?? ""} ${subcategoryName ?? ""}`);
   const { categoryName: resolvedCategoryName, profile } = baseProfile(slug);
   const finalCategoryName = categoryName?.trim() || resolvedCategoryName;
   const tuned = overrideProfile(title, subcategoryName, profile);
   const subcategoryLead = subcategoryName?.trim()
     ? ` within our ${subcategoryName.trim()} edit`
     : "";
-  const keywordLead = getCatalogGroupBySlug(slug)?.description ?? `${finalCategoryName} curated for modern menswear styling.`;
+  const keywordLead =
+    getCatalogGroupBySlug(slug)?.description ??
+    `${finalCategoryName} curated for modern menswear styling.`;
 
   return `${title} is a standout ${finalCategoryName.toLowerCase()} piece${subcategoryLead}, created for men who want a confident look without giving up comfort. Built from ${tuned.material}, it offers ${tuned.fit}. Ideal for ${tuned.occasion}, it ${tuned.styling}. ${keywordLead} Care: ${tuned.care}. Fast Nairobi fulfilment and nationwide delivery available.`;
+}
+
+export function buildProductFeatures({
+  title,
+  categorySlug,
+  categoryName,
+  subcategoryName,
+}: ProductCopyInput) {
+  const slug =
+    categorySlug ||
+    inferCategorySlugFromText(`${title} ${categoryName ?? ""} ${subcategoryName ?? ""}`);
+  const { profile } = baseProfile(slug);
+  const tuned = overrideProfile(title, subcategoryName, profile);
+
+  return [
+    `Material: ${tuned.material}.`,
+    `Fit: ${tuned.fit}.`,
+    `Best for: ${tuned.occasion}.`,
+    `Styling: ${tuned.styling}.`,
+    `Care: ${tuned.care}.`,
+  ];
 }

@@ -160,11 +160,14 @@ function pickBestDetailFromList(
     }
   }
 
-  const seed = `${lookup.slug ?? ""} ${lookup.title ?? ""} ${lookup.image ?? ""}`.trim() || list[0]?.slug;
+  const seed =
+    `${lookup.slug ?? ""} ${lookup.title ?? ""} ${lookup.image ?? ""}`.trim() || list[0]?.slug;
   return list[hashSeed(seed) % list.length] ?? list[0] ?? null;
 }
 
-export function getCatalogFallbackForProduct(lookup: FashionProductLookup): FashionProductDetail | null {
+export function getCatalogFallbackForProduct(
+  lookup: FashionProductLookup,
+): FashionProductDetail | null {
   const slug = lookup.slug?.trim();
   if (slug) {
     const direct = catalogProductDetailBySlug.get(slug);
@@ -207,7 +210,9 @@ export function fashionProductsAsCards(): ProductCardData[] {
 }
 
 export function fashionProductsForCategorySlug(pageSlug: string): ProductCardData[] {
-  return dedupeProductsBySlugPreferOrder(getCatalogAssetsForCategory(pageSlug).map(assetToProductCard));
+  return dedupeProductsBySlugPreferOrder(
+    getCatalogAssetsForCategory(pageSlug).map(assetToProductCard),
+  );
 }
 
 export type FashionProductDetail = {
@@ -239,8 +244,7 @@ export function mergeCatalogFallbackIntoCard(product: ProductCardData): ProductC
   });
   if (!fallback) return product;
 
-  const shouldPreferAssetImage =
-    !product.image || product.image.startsWith("/src/assets/");
+  const shouldPreferAssetImage = !product.image || product.image.startsWith("/src/assets/");
 
   return {
     ...product,
@@ -253,11 +257,21 @@ export function mergeCatalogFallbackIntoCard(product: ProductCardData): ProductC
 }
 
 export function dedupeProductsBySlugPreferOrder(products: ProductCardData[]): ProductCardData[] {
-  const seen = new Set<string>();
+  const seenSlugs = new Set<string>();
+  const seenIdentity = new Set<string>();
   const out: ProductCardData[] = [];
   for (const product of products) {
-    if (seen.has(product.slug)) continue;
-    seen.add(product.slug);
+    const slugKey = normalizeLookupText(product.slug);
+    const identityKey = [
+      normalizeLookupText(product.title),
+      normalizeLookupText(product.category_slug),
+      normalizeLookupText(product.category_name),
+      normalizeLookupText(product.subcategory_name),
+      normalizeLookupText(product.image),
+    ].join("::");
+    if (seenSlugs.has(slugKey) || seenIdentity.has(identityKey)) continue;
+    seenSlugs.add(slugKey);
+    seenIdentity.add(identityKey);
     out.push(product);
   }
   return out;

@@ -12,16 +12,33 @@ import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { fetchProductDetailBySlug } from "@/lib/publishedProductsQuery";
 import { deleteProductCompletely } from "@/lib/productDeletion";
+import { wasProductDeletedBySlug } from "@/lib/productDeletion";
 import { productsUpdateSafe } from "@/lib/productWriteFallback";
 import { getSubcategoriesForCategory } from "@/lib/subcategories";
 import { NotFoundPage } from "@/components/site/NotFoundPage";
 import { getCatalogFallbackForProduct } from "@/lib/fashionProducts";
+import { getCatalogAssetsForCategory, getCatalogAssetsForExactFolder } from "@/lib/catalogAssets";
+import { buildProductFeatures } from "@/lib/productCopy";
 
 export const Route = createFileRoute("/product/$slug")({
   component: ProductPage,
 });
 
 type Variant = { id: string; size: string | null; color: string | null; stock_quantity: number };
+type ProductDetailState = {
+  id: string;
+  slug: string;
+  title: string;
+  description: string | null;
+  price: number | string;
+  sale_price: number | string | null;
+  subcategory?: string | null;
+  is_published?: boolean | null;
+  is_featured?: boolean | null;
+  categories?: { name: string | null; slug: string | null } | null;
+  product_images?: Array<{ image_url: string | null }> | null;
+  product_variants?: Variant[] | null;
+};
 
 function ProductPage() {
   const { slug } = Route.useParams();
@@ -29,7 +46,7 @@ function ProductPage() {
   const { isStaff, isSuperAdmin, loading: authLoading } = useAuth();
   const cart = useCart();
   const wishlist = useWishlist();
-  const [product, setProduct] = useState<any>(null);
+  const [product, setProduct] = useState<ProductDetailState | null>(null);
   const [variants, setVariants] = useState<Variant[]>([]);
   const [images, setImages] = useState<string[]>([]);
   const [activeVariant, setActiveVariant] = useState<Variant | null>(null);
@@ -40,9 +57,9 @@ function ProductPage() {
   const [missing, setMissing] = useState(false);
   const [adminBusy, setAdminBusy] = useState(false);
   const [adminUploadingImage, setAdminUploadingImage] = useState(false);
-  const [adminCategories, setAdminCategories] = useState<{ id: string; name: string; slug: string }[]>(
-    [],
-  );
+  const [adminCategories, setAdminCategories] = useState<
+    { id: string; name: string; slug: string }[]
+  >([]);
   const [adminDraft, setAdminDraft] = useState({
     title: "",
     slug: "",
@@ -62,11 +79,18 @@ function ProductPage() {
       setLoading(true);
       setMissing(false);
       const slugFallback = getCatalogFallbackForProduct({ slug });
+      const deletedCheck = await wasProductDeletedBySlug(supabase, slug);
       const { data: p, error: fetchErr } = await fetchProductDetailBySlug(supabase, slug, {
         onlyPublished: !isStaff,
       });
       if (fetchErr) {
         console.error("[product] load failed:", fetchErr);
+        if (deletedCheck.deleted) {
+          setProduct(null);
+          setMissing(true);
+          setLoading(false);
+          return;
+        }
         if (slugFallback) {
           setProduct({
             id: slugFallback.id,
@@ -126,16 +150,18 @@ function ProductPage() {
           ...p,
           title: p.title?.trim() || assetFallback?.title || p.title,
           description:
-            (typeof p.description === "string" && p.description.trim().length >= 80
+            typeof p.description === "string" && p.description.trim().length >= 80
               ? p.description
-              : assetFallback?.description || p.description),
+              : assetFallback?.description || p.description,
           categories:
             p.categories ??
             (assetFallback
               ? { name: assetFallback.categoryName, slug: assetFallback.categorySlug }
               : null),
           subcategory:
-            (p as { subcategory?: string | null }).subcategory || assetFallback?.subcategoryName || null,
+            (p as { subcategory?: string | null }).subcategory ||
+            assetFallback?.subcategoryName ||
+            null,
         });
         let categoryId = "";
         if (p.categories?.slug) {
@@ -146,22 +172,24 @@ function ProductPage() {
             .maybeSingle();
           categoryId = catRow?.id ?? "";
         }
-        const rawImages = (p.product_images ?? []).map((i: any) => i.image_url).filter(Boolean);
+        const rawImages = (p.product_images ?? []).map((image) => image.image_url).filter(Boolean);
         const fallbackImage = assetFallback?.image ?? null;
         const imgs = Array.from(
           new Set(
-            (rawImages.length > 0 ? rawImages : fallbackImage ? [fallbackImage] : []).map((imageUrl) => {
-              if (
-                imageUrl?.startsWith("/src/assets/") &&
-                !hasResolvableAssetSourcePath(imageUrl)
-              ) {
-                return fallbackImage;
-              }
-              return imageUrl;
-            }),
+            (rawImages.length > 0 ? rawImages : fallbackImage ? [fallbackImage] : []).map(
+              (imageUrl) => {
+                if (
+                  imageUrl?.startsWith("/src/assets/") &&
+                  !hasResolvableAssetSourcePath(imageUrl)
+                ) {
+                  return fallbackImage;
+                }
+                return imageUrl;
+              },
+            ),
           ),
         ).filter(Boolean) as string[];
-        setImages(imgs.length > 0 ? imgs : fallbackImage ? [fallbackImage] : [null as any]);
+        setImages(imgs.length > 0 ? imgs : fallbackImage ? [fallbackImage] : []);
         const vs = (p.product_variants ?? []) as Variant[];
         setVariants(vs);
         const firstAvailable = vs.find((v) => v.stock_quantity > 0) ?? vs[0] ?? null;
@@ -180,6 +208,13 @@ function ProductPage() {
           is_published: Boolean(p.is_published ?? true),
           is_featured: Boolean(p.is_featured ?? false),
         });
+        setLoading(false);
+        return;
+      }
+
+      if (deletedCheck.deleted) {
+        setProduct(null);
+        setMissing(true);
         setLoading(false);
         return;
       }
@@ -284,11 +319,42 @@ function ProductPage() {
   ] as string[];
   const wished = wishlist.has(product.id);
   const isAssetOnlyProduct = String(product.id).startsWith("asset:");
+  const categorySlug = product.categories?.slug ?? "";
+  const relatedAngleImages = (
+    getCatalogAssetsForExactFolder(categorySlug).length > 0
+      ? getCatalogAssetsForExactFolder(categorySlug)
+      : getCatalogAssetsForCategory(categorySlug)
+  )
+    .filter((asset) => {
+      if (
+        product.subcategory &&
+        asset.subcategoryName &&
+        asset.subcategoryName !== product.subcategory
+      ) {
+        return false;
+      }
+      return !images.includes(asset.image);
+    })
+    .slice(0, Math.max(0, 4 - images.length))
+    .map((asset) => asset.image);
+  const galleryImages = Array.from(new Set([...images, ...relatedAngleImages])).slice(0, 4);
   const featureList = [
-    activeVariant?.size ? `Available size selected: ${activeVariant.size}` : "Multiple size options available",
-    activeVariant?.color ? `Color option selected: ${activeVariant.color}` : "Multiple color options available",
-    onSale ? `Current offer price: ${formatKES(displayPrice)}` : `Regular price: ${formatKES(displayPrice)}`,
-    "Fast delivery available across Kenya, with quick Nairobi fulfilment.",
+    ...buildProductFeatures({
+      title: product.title,
+      categorySlug: product.categories?.slug,
+      categoryName: product.categories?.name,
+      subcategoryName: product.subcategory,
+    }),
+    activeVariant?.size
+      ? `Selected size: ${activeVariant.size}.`
+      : "Sizes: check available options before checkout.",
+    activeVariant?.color
+      ? `Selected colour: ${activeVariant.color}.`
+      : "Colours: options vary by stock availability.",
+    onSale
+      ? `Current offer price: ${formatKES(displayPrice)}`
+      : `Regular price: ${formatKES(displayPrice)}`,
+    "Fulfilment: fast Nairobi delivery, in-store pickup, and nationwide shipping available.",
   ];
 
   const saveAdminChanges = async () => {
@@ -357,12 +423,13 @@ function ProductPage() {
     try {
       setAdminUploadingImage(true);
       const fileExt = (file.name.split(".").pop() || "jpg").toLowerCase();
-      const fileBase = file.name
-        .replace(/\.[^.]+$/, "")
-        .toLowerCase()
-        .replace(/[^a-z0-9]+/g, "-")
-        .replace(/^-+|-+$/g, "")
-        .slice(0, 40) || "image";
+      const fileBase =
+        file.name
+          .replace(/\.[^.]+$/, "")
+          .toLowerCase()
+          .replace(/[^a-z0-9]+/g, "-")
+          .replace(/^-+|-+$/g, "")
+          .slice(0, 40) || "image";
       const filePath = `admin-uploads/${Date.now()}-${Math.random().toString(36).slice(2, 8)}-${fileBase}.${fileExt}`;
       const bucket = supabase.storage.from("product-images");
       const { error: uploadError } = await bucket.upload(filePath, file, {
@@ -374,8 +441,8 @@ function ProductPage() {
       const { data } = bucket.getPublicUrl(filePath);
       setAdminDraft((d) => ({ ...d, image_url: data.publicUrl }));
       toast.success("Image uploaded.");
-    } catch (error: any) {
-      toast.error(error?.message ?? "Failed to upload image.");
+    } catch (error: unknown) {
+      toast.error(error instanceof Error ? error.message : "Failed to upload image.");
     } finally {
       setAdminUploadingImage(false);
     }
@@ -383,7 +450,9 @@ function ProductPage() {
 
   const deleteProductNow = async () => {
     if (!isSuperAdmin) return;
-    const confirmed = window.confirm(`Delete "${product.title}" completely? This cannot be undone.`);
+    const confirmed = window.confirm(
+      `Delete "${product.title}" completely? This cannot be undone.`,
+    );
     if (!confirmed) return;
     setAdminBusy(true);
     const { error } = await deleteProductCompletely(supabase, product.id);
@@ -402,36 +471,53 @@ function ProductPage() {
       toast.error("Not enough stock for that size.");
       return;
     }
-    cart.add({
-      productId: product.id,
-      variantId: activeVariant.id,
-      title: product.title,
-      image: images[0] ?? "",
-      price: displayPrice,
-      size: activeVariant.size,
-      color: activeVariant.color,
-      slug: product.slug,
-    }, qty);
+    cart.add(
+      {
+        productId: product.id,
+        variantId: activeVariant.id,
+        title: product.title,
+        image: images[0] ?? "",
+        price: displayPrice,
+        size: activeVariant.size,
+        color: activeVariant.color,
+        slug: product.slug,
+      },
+      qty,
+    );
     toast.success("Added to cart");
   };
 
   return (
     <div className="container mx-auto px-4 py-10">
       <nav className="mb-6 text-xs text-muted-foreground">
-        <Link to="/" className="hover:text-gold">Home</Link> /{" "}
-        <Link to="/shop" className="hover:text-gold">Shop</Link>
+        <Link to="/" className="hover:text-gold">
+          Home
+        </Link>{" "}
+        /{" "}
+        <Link to="/shop" className="hover:text-gold">
+          Shop
+        </Link>
         {product.categories && (
           <>
-            {" "}/ <Link to="/category/$slug" params={{ slug: product.categories.slug }} className="hover:text-gold">{product.categories.name}</Link>
+            {" "}
+            /{" "}
+            <Link
+              to="/category/$slug"
+              params={{ slug: product.categories.slug }}
+              className="hover:text-gold"
+            >
+              {product.categories.name}
+            </Link>
           </>
-        )}{" "}/ <span className="text-foreground">{product.title}</span>
+        )}{" "}
+        / <span className="text-foreground">{product.title}</span>
       </nav>
 
       <div className="grid gap-10 md:grid-cols-2">
         <div className="space-y-3">
-          <div className="aspect-[4/5] overflow-hidden rounded-md bg-muted">
+          <div className="product-gallery-hero aspect-[4/5] overflow-hidden rounded-md bg-muted">
             <img
-              src={resolveImage(images[0])}
+              src={resolveImage(galleryImages[0])}
               alt={product.title}
               loading="eager"
               decoding="async"
@@ -440,13 +526,16 @@ function ProductPage() {
               className="h-full w-full object-cover"
             />
           </div>
-          {images.length > 1 && (
+          {galleryImages.length > 1 && (
             <div className="grid grid-cols-4 gap-2">
-              {images.map((src, i) => (
-                <div key={i} className="aspect-square overflow-hidden rounded bg-muted">
+              {galleryImages.map((src, i) => (
+                <div
+                  key={`${src}-${i}`}
+                  className="angle-thumb aspect-square overflow-hidden rounded bg-muted"
+                >
                   <img
                     src={resolveImage(src)}
-                    alt=""
+                    alt={i === 0 ? `${product.title} main view` : `${product.title} angle ${i + 1}`}
                     loading="lazy"
                     decoding="async"
                     fetchPriority="low"
@@ -461,7 +550,9 @@ function ProductPage() {
 
         <div>
           {product.categories && (
-            <p className="text-xs font-semibold uppercase tracking-[0.2em] text-gold">{product.categories.name}</p>
+            <p className="text-xs font-semibold uppercase tracking-[0.2em] text-gold">
+              {product.categories.name}
+            </p>
           )}
           <h1 className="mt-2 font-display text-3xl font-bold md:text-4xl">{product.title}</h1>
           {isStaff && !product.is_published && (
@@ -471,7 +562,11 @@ function ProductPage() {
           )}
           <div className="mt-3 flex items-baseline gap-3">
             <span className="text-2xl font-semibold text-gold">{formatKES(displayPrice)}</span>
-            {onSale && <span className="text-sm text-muted-foreground line-through">{formatKES(product.price)}</span>}
+            {onSale && (
+              <span className="text-sm text-muted-foreground line-through">
+                {formatKES(product.price)}
+              </span>
+            )}
           </div>
 
           {isStaff && !isAssetOnlyProduct && (
@@ -480,8 +575,8 @@ function ProductPage() {
                 Staff quick edit
               </p>
               <p className="mb-3 text-xs text-muted-foreground">
-                Assign the correct category and subcategory so this item appears in the right shop group.
-                Save updates the live product—no need to open the admin dashboard.
+                Assign the correct category and subcategory so this item appears in the right shop
+                group. Save updates the live product—no need to open the admin dashboard.
               </p>
               <div className="grid gap-2 md:grid-cols-2">
                 <input
@@ -510,13 +605,17 @@ function ProductPage() {
                 </select>
                 {(() => {
                   const selectedCat = adminCategories.find((c) => c.id === adminDraft.category_id);
-                  const subOpts = selectedCat?.slug ? getSubcategoriesForCategory(selectedCat.slug) : [];
+                  const subOpts = selectedCat?.slug
+                    ? getSubcategoriesForCategory(selectedCat.slug)
+                    : [];
                   return (
                     <div className="md:col-span-2">
                       <input
                         list={subOpts.length > 0 ? "staff-product-subcat" : undefined}
                         value={adminDraft.subcategory}
-                        onChange={(e) => setAdminDraft((d) => ({ ...d, subcategory: e.target.value }))}
+                        onChange={(e) =>
+                          setAdminDraft((d) => ({ ...d, subcategory: e.target.value }))
+                        }
                         placeholder="Subcategory (matches shop filters)"
                         className="w-full rounded border border-border bg-background px-2 py-1 text-sm"
                       />
@@ -604,7 +703,12 @@ function ProductPage() {
                   {adminBusy ? "Saving..." : "Save changes"}
                 </Button>
                 {isSuperAdmin && (
-                  <Button size="sm" variant="destructive" disabled={adminBusy} onClick={deleteProductNow}>
+                  <Button
+                    size="sm"
+                    variant="destructive"
+                    disabled={adminBusy}
+                    onClick={deleteProductNow}
+                  >
                     Delete product
                   </Button>
                 )}
@@ -639,7 +743,9 @@ function ProductPage() {
                       disabled={oos}
                       className={cn(
                         "min-w-12 rounded border px-3 py-2 text-sm transition-colors",
-                        active ? "border-gold bg-gold text-gold-foreground" : "border-border hover:border-gold",
+                        active
+                          ? "border-gold bg-gold text-gold-foreground"
+                          : "border-border hover:border-gold",
                         oos && "cursor-not-allowed text-muted-foreground line-through opacity-50",
                       )}
                     >
@@ -682,7 +788,9 @@ function ProductPage() {
                               (!selectedSize || x.size === selectedSize) &&
                               x.stock_quantity > 0,
                           ) ??
-                          variants.find((x) => x.color === color && (!selectedSize || x.size === selectedSize)) ??
+                          variants.find(
+                            (x) => x.color === color && (!selectedSize || x.size === selectedSize),
+                          ) ??
                           null;
                         setSelectedColor(color);
                         setActiveVariant(nextVariant);
@@ -690,8 +798,11 @@ function ProductPage() {
                       disabled={!hasInStock}
                       className={cn(
                         "rounded border px-3 py-2 text-sm transition-colors",
-                        active ? "border-gold bg-gold text-gold-foreground" : "border-border hover:border-gold",
-                        !hasInStock && "cursor-not-allowed text-muted-foreground line-through opacity-50",
+                        active
+                          ? "border-gold bg-gold text-gold-foreground"
+                          : "border-border hover:border-gold",
+                        !hasInStock &&
+                          "cursor-not-allowed text-muted-foreground line-through opacity-50",
                       )}
                     >
                       {color}
@@ -704,11 +815,23 @@ function ProductPage() {
 
           <div className="mt-6 flex items-center gap-3">
             <div className="flex items-center rounded border border-border">
-              <button onClick={() => setQty((q) => Math.max(1, q - 1))} className="px-3 py-2"><Minus className="h-3 w-3" /></button>
+              <button onClick={() => setQty((q) => Math.max(1, q - 1))} className="px-3 py-2">
+                <Minus className="h-3 w-3" />
+              </button>
               <span className="w-10 text-center text-sm font-medium">{qty}</span>
-              <button onClick={() => setQty((q) => q + 1)} className="px-3 py-2"><Plus className="h-3 w-3" /></button>
+              <button onClick={() => setQty((q) => q + 1)} className="px-3 py-2">
+                <Plus className="h-3 w-3" />
+              </button>
             </div>
-            <Button variant="default" size="lg" onClick={handleAdd} disabled={!activeVariant} className="flex-1">Add to cart</Button>
+            <Button
+              variant="default"
+              size="lg"
+              onClick={handleAdd}
+              disabled={!activeVariant}
+              className="flex-1"
+            >
+              Add to cart
+            </Button>
             <Button
               variant="outline"
               size="icon"
@@ -721,21 +844,36 @@ function ProductPage() {
           </div>
 
           <div className="mt-6 rounded-md border border-border bg-card p-4">
-            <h2 className="text-sm font-semibold uppercase tracking-wider text-gold">Description & Features</h2>
-            <p className="mt-2 text-sm leading-relaxed text-foreground/80">
-              {product.description}
-            </p>
-            <ol className="mt-3 list-decimal space-y-1 pl-5 text-sm text-foreground/85">
+            <h2 className="text-sm font-semibold uppercase tracking-wider text-gold">
+              Description & Features
+            </h2>
+            <p className="mt-2 text-sm leading-relaxed text-foreground/80">{product.description}</p>
+            <ul className="mt-4 grid gap-2 text-sm text-foreground/85">
               {featureList.map((feature, index) => (
-                <li key={`${feature}-${index}`}>{feature}</li>
+                <li
+                  key={`${feature}-${index}`}
+                  className="flex gap-2 rounded-sm bg-secondary/50 px-3 py-2"
+                >
+                  <span className="mt-1 h-1.5 w-1.5 shrink-0 rounded-full bg-gold" />
+                  <span>{feature}</span>
+                </li>
               ))}
-            </ol>
+            </ul>
           </div>
 
           <div className="mt-8 grid grid-cols-3 gap-4 border-t border-border pt-6 text-center">
-            <div className="text-xs"><Truck className="mx-auto mb-1 h-5 w-5 text-gold" />Free Nairobi delivery</div>
-            <div className="text-xs"><Store className="mx-auto mb-1 h-5 w-5 text-gold" />In-store pickup</div>
-            <div className="text-xs"><ShieldCheck className="mx-auto mb-1 h-5 w-5 text-gold" />14-day returns</div>
+            <div className="text-xs">
+              <Truck className="mx-auto mb-1 h-5 w-5 text-gold" />
+              Free Nairobi delivery
+            </div>
+            <div className="text-xs">
+              <Store className="mx-auto mb-1 h-5 w-5 text-gold" />
+              In-store pickup
+            </div>
+            <div className="text-xs">
+              <ShieldCheck className="mx-auto mb-1 h-5 w-5 text-gold" />
+              14-day returns
+            </div>
           </div>
         </div>
       </div>
