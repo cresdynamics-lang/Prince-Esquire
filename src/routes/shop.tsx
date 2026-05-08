@@ -10,6 +10,7 @@ import {
   fashionProductsAsCards,
   mergeCatalogFallbackIntoCard,
 } from "@/lib/fashionProducts";
+import { EXTERNAL_PRODUCT_CARDS } from "@/lib/externalProducts";
 import { getSubcategoriesForCategory, resolveSubcategory } from "@/lib/subcategories";
 import { siteHeroSuitUrl } from "@/lib/assetMap";
 import { fetchDeletedProductSlugs } from "@/lib/productDeletion";
@@ -75,8 +76,8 @@ function ShopPage() {
         (ps ?? []).map((p: any) => p.categories?.slug).filter(Boolean) as string[],
       );
       const categories = allRows
-        .filter((c) => ALLOWED_CATEGORY_SLUGS.has(c.slug) || productSlugs.has(c.slug))
-        .sort((a, b) => {
+        .filter((c: { slug: string }) => ALLOWED_CATEGORY_SLUGS.has(c.slug) || productSlugs.has(c.slug))
+        .sort((a: { slug: string; name: string }, b: { slug: string; name: string }) => {
           const ia = CATALOG_TAXONOMY.findIndex((t) => t.slug === a.slug);
           const ib = CATALOG_TAXONOMY.findIndex((t) => t.slug === b.slug);
           const ra = ia >= 0 ? ia : 500;
@@ -117,7 +118,11 @@ function ShopPage() {
       });
       setProductCategoryMap(categoryMap);
       setProducts(
-        dedupeProductsBySlugPreferOrder([...dbCards, ...excludeDeleted(fashionProductsAsCards())]),
+        dedupeProductsBySlugPreferOrder([
+          ...dbCards,
+          ...excludeDeleted(fashionProductsAsCards()),
+          ...EXTERNAL_PRODUCT_CARDS,
+        ]),
       );
       setLoading(false);
     })();
