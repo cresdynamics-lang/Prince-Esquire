@@ -118,11 +118,11 @@ function CategoryPage() {
       }
 
       const dbCards = dedupeProductCardsStable(
-        (ps ?? []).map((p: CategoryProductRow) =>
+        ((ps ?? []) as CategoryProductRow[]).map((p) =>
           mergeCatalogFallbackIntoCard({
             id: p.id,
             slug: p.slug,
-            title: p.title,
+            title: p.title ?? "",
             price: Number(p.price),
             sale_price: p.sale_price != null ? Number(p.sale_price) : null,
             image: p.product_images?.[0]?.image_url ?? null,
@@ -273,20 +273,24 @@ function CategoryPage() {
       <div className="container mx-auto px-4 py-12">
         {subcategories.length > 0 && (
           <div className="mb-8 flex flex-wrap justify-center gap-2">
-            <button
-              onClick={() => setActiveSubcategory(null)}
+            <Link
+              to="/category/$slug"
+              params={{ slug }}
+              search={{ sub: "" }}
               className={`rounded-full border px-4 py-1.5 text-xs font-medium transition-colors ${activeSubcategory === null ? "border-gold bg-gold text-gold-foreground" : "border-border hover:border-gold"}`}
             >
               All {cat?.name ?? ""}
-            </button>
+            </Link>
             {subcategories.map((subcat) => (
-              <button
+              <Link
                 key={subcat}
-                onClick={() => setActiveSubcategory(subcat)}
+                to="/category/$slug"
+                params={{ slug }}
+                search={{ sub: subcat }}
                 className={`rounded-full border px-4 py-1.5 text-xs font-medium transition-colors ${activeSubcategory === subcat ? "border-gold bg-gold text-gold-foreground" : "border-border hover:border-gold"}`}
               >
                 {subcat}
-              </button>
+              </Link>
             ))}
           </div>
         )}
